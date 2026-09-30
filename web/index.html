@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>圆桌会议 RoundTable Lite</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+
+  <!-- 左：会议列表 -->
+  <aside id="meetings-pane" class="pane">
+    <div class="pane-head">
+      <span>会议</span>
+      <span class="head-actions">
+        <button id="btn-help" class="btn btn-sm" title="如何接入 AI 成员（Codex 等）">?</button>
+        <button id="btn-new-meeting" class="btn btn-primary btn-sm">+ 新建会议</button>
+      </span>
+    </div>
+    <ul id="meeting-list" class="list"></ul>
+  </aside>
+
+  <!-- 中：控制条 + 消息流 + 输入 -->
+  <main id="main-pane">
+    <div id="control-bar" class="control-bar hidden">
+      <span id="meeting-title" class="meeting-title"></span>
+      <span id="meeting-status" class="chip">running</span>
+      <span class="spacer"></span>
+      <button id="btn-pause" class="btn btn-sm">暂停</button>
+      <button id="btn-stop" class="btn btn-sm btn-danger">停止</button>
+      <button id="btn-reset" class="btn btn-sm">重置</button>
+      <button id="btn-meeting-delete" class="btn btn-sm btn-danger">删除</button>
+    </div>
+
+    <div id="messages" class="messages">
+      <div class="empty-hint">← 选择或创建一个会议开始</div>
+    </div>
+
+    <form id="composer" class="composer hidden" autocomplete="off">
+      <textarea id="input" rows="2"
+        placeholder="发言。@ 点名成员；Enter 发送；Shift+Enter 换行"></textarea>
+      <button type="submit" class="btn btn-primary">发送</button>
+      <div id="mention-pop" class="mention-pop hidden"></div>
+    </form>
+  </main>
+
+  <!-- 右：参与者 + 表单 -->
+  <aside id="side-pane" class="pane">
+    <div class="pane-head">
+      <span>参与者</span>
+      <button id="btn-add-participant" class="btn btn-sm">+ 加入成员</button>
+    </div>
+    <ul id="participant-list" class="list"></ul>
+
+    <div class="pane-head">
+      <span>待答表单 <span id="form-badge" class="badge hidden">0</span></span>
+    </div>
+    <ul id="form-list" class="list"></ul>
+  </aside>
+</div>
+
+<!-- 新建会议 -->
+<dialog id="dlg-meeting" class="dlg">
+  <form method="dialog" id="form-meeting">
+    <h3>新建会议</h3>
+    <label>名称<input id="m-name" name="name" required maxlength="80" placeholder="例如：架构评审"></label>
+    <label>描述<input id="m-desc" name="description" maxlength="500" placeholder="可选"></label>
+    <div class="dlg-actions">
+      <button value="cancel" class="btn" type="button" data-close>取消</button>
+      <button value="ok" class="btn btn-primary" id="m-save">创建</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- 加入成员 -->
+<dialog id="dlg-participant" class="dlg">
+  <form id="form-participant">
+    <h3>加入成员</h3>
+    <label>从预设填充
+      <select id="p-preset"><option value="">— 手动填写 —</option></select>
+    </label>
+    <label>显示名<input id="p-name" required maxlength="40" placeholder="不含空格，如 Codex"></label>
+    <label>类型
+      <select id="p-transport">
+        <option value="cli">CLI（被 @ 时由系统调起）</option>
+        <option value="mcp">MCP（Agent 自己连 /mcp 进来）</option>
+      </select>
+    </label>
+    <div id="p-cli-fields">
+      <label>命令<input id="p-cmd" placeholder="如 codex"></label>
+      <label>参数（JSON 数组，{outfile} 为回复文件占位符）
+        <textarea id="p-args" rows="3" placeholder='["exec","-s","read-only","--skip-git-repo-check","-o","{outfile}"]'></textarea>
+      </label>
+    </div>
+    <label>人设（system prompt）<textarea id="p-sp" rows="3" placeholder="角色、发言风格、字数约束…"></textarea></label>
+    <label>触发模式
+      <select id="p-trigger">
+        <option value="mention">mention：被 @ 时响应</option>
+        <option value="always">always：我的每条发言都唤醒</option>
+      </select>
+    </label>
+    <div class="dlg-actions">
+      <button type="button" class="btn" data-close>取消</button>
+      <button type="submit" class="btn btn-primary">加入</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- 表单向导 -->
+<dialog id="dlg-form" class="dlg">
+  <form id="form-answer">
+    <h3 id="f-title"></h3>
+    <p class="muted" id="f-author"></p>
+    <div id="f-fields"></div>
+    <div class="dlg-actions">
+      <button type="button" class="btn" id="f-cancel">不回答（取消表单）</button>
+      <button type="submit" class="btn btn-primary">提交回答</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- 接入帮助（? 按钮） -->
+<dialog id="dlg-help" class="dlg help-box">
+  <h3>接入 AI 成员</h3>
+  <p class="muted">选成员类型，<b>新开一个对话</b>把提示词粘贴发送即可入会值守。一个对话 = 一个席位；对话面板保持打开（最小化可以）。</p>
+  <div class="seg-group" id="h-type-group">
+    <button type="button" class="seg active" data-type="codex">Codex（MCP）</button>
+    <button type="button" class="seg" data-type="dsh">DSH（技能）</button>
+    <button type="button" class="seg" data-type="workbuddy">WorkBuddy（REST）</button>
+  </div>
+  <label>成员显示名（提示词同步更新，别人 @ 它用这个名字）
+    <input id="h-name" maxlength="40" value="Codex">
+  </label>
+  <label>接入提示词
+    <textarea id="h-prompt" class="mono" rows="9" readonly></textarea>
+  </label>
+  <p class="muted" id="h-note"></p>
+  <div class="dlg-actions split">
+    <button type="button" class="btn btn-primary" id="h-copy">复制提示词</button>
+    <button type="button" class="btn" data-close>关闭</button>
+  </div>
+  <div id="h-cfg-row">
+    <p class="muted" style="margin-top:12px;">Codex 首次接入需在本机执行一次（全局配置，已配过可跳过）：</p>
+    <div class="code-line">
+      <code id="h-cfg">codex mcp add roundtable --url http://127.0.0.1:8787/mcp</code>
+      <button type="button" class="btn btn-sm" id="h-copy-cfg">复制</button>
+    </div>
+  </div>
+  <ul class="help-notes">
+    <li>未选会议时，Agent 会自动加入最近创建且未停止的会议；已选中会议则提示词自带本会议 ID，更精确。</li>
+    <li>CLI 型成员（被 @ 时由系统自动调起）不需要提示词：右侧「+ 加入成员」选预设即可。</li>
+  </ul>
+</dialog>
+
+<div id="toast" class="toast hidden"></div>
+<script src="app.js"></script>
+</body>
+</html>

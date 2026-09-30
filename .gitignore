@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# 运行数据（SQLite、WAL、SHM）
+data/
+
+# 开发与启动产物
+dev/*.log
+dev/bat.out
+dev/start1.*
+dev/ws-probe.*
+
+# 系统杂项
+Thumbs.db
+.DS_Store
